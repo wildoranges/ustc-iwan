@@ -226,6 +226,98 @@ curl -x http://127.0.0.1:8080 http://www.example.com/    # 明文转发
 `GET /path` 后转发）。限制：仅 IPv4 目标；不支持代理认证；明文 HTTP 每个连接只处理一个请求
 （转发时强制 `Connection: close`）。`--socks` 与 `--http` 互斥。
 
+### HTTP 代理后台管理（Linux）
+
+构建客户端后，可以使用仓库根目录的 `iwan-http.sh`，通过 `auth` 完成认证。脚本使用
+`nohup` 和独立会话运行代理，退出终端后继续运行；机器重启后需手动启动。需要 Bash 4.4+、
+`nohup`、`setsid`、`flock`、`curl`。`start`、`restart`、`switch` 默认同时启动后台巡检，
+目标为 `https://example.com/`，无需另开终端运行 `watch`；`stop` 同时关闭巡检和代理。
+
+```bash
+./iwan-http.sh auth              # 前台 OIDC 登录并保存线路配置
+./iwan-http.sh start             # 后台启动代理和巡检，首次使用线路 1
+./iwan-http.sh status            # 查看代理、巡检 PID、目标和监听地址
+./iwan-http.sh list              # 列出认证配置中的线路
+./iwan-http.sh switch 电信        # 切换线路，也可以传编号，例如 switch 2
+./iwan-http.sh test              # 对全部线路做协议 PING，显示可达性与 RTT
+./iwan-http.sh test 1            # 只测试指定线路，也支持名称关键词
+./iwan-http.sh check             # 实测当前代理的 HTTP 和 HTTPS 转发
+./iwan-http.sh check https://www.ustc.edu.cn/  # 检查指定目标
+./iwan-http.sh ensure            # 实测转发，失败时重连一次并验证
+./iwan-http.sh ensure http://202.38.78.31:1480/  # 验证校内 Git 服务并按需恢复
+./iwan-http.sh watch             # 可选的前台巡检；已有巡检时会拒绝重复启动
+./iwan-http.sh restart           # 使用当前/上次成功的线路重启
+./iwan-http.sh restart 1         # 重启并指定线路
+./iwan-http.sh stop              # 关闭，重复执行无害
+./iwan-http.sh logs -f           # 持续查看日志，Ctrl+C 结束查看
+```
+
+也可以在仓库根目录创建命令链接：
+
+```bash
+mkdir -p "$HOME/.local/bin"
+ln -s "$(pwd)/iwan-http.sh" "$HOME/.local/bin/iwan-http"
+```
+
+确保 `~/.local/bin` 已加入 `PATH`（否则可执行 `export PATH="$HOME/.local/bin:$PATH"`），
+之后可以在任意目录执行 `iwan-http status`、`iwan-http restart` 等命令。
+脚本会解析符号链接，仍从仓库目录查找二进制和运行状态文件。
+
+`auth` 会输出登录链接，浏览器认证后需将回调 URL 粘贴回终端；配置保存在
+`IWAN_CONFIG_DIR` 指定的目录（默认 `~/.config/iwan`）。重新认证后可用 `restart` 重新连接。
+线路配置会保留服务端下发的 `salt`，用于线路密码认证。若旧版获取的配置在连接时返回
+`INVPASS`，升级并重新执行 `auth` 获取完整配置后再连接；PING 成功并不代表线路认证通过。
+连接时若网关对 `AUTH_VERIFY` 握手返回的响应缺少隧道 IP，OIDC 客户端会自动重试不带该字段的
+兼容握手；仍未获得有效隧道 IPv4 地址时会报错，不会启动代理。
+
+`start` 重复执行不会启动多个代理；线路参数支持编号或名称关键词（与客户端相同，取首个
+匹配项）。切换失败时会尝试恢复原线路。`test` 仅测试协议 PING，不会切换当前线路，
+也不代表认证或业务转发一定可用；用 `check` 验证当前代理。任一线路测试失败时 `test`
+返回非零退出码，`status` 在未运行时返回 3。
+
+`status` 只报告进程状态，不代表隧道可用。`check` 严格检查所有指定目标的 HTTP 成功状态；
+超时默认 40 秒，覆盖客户端 30 秒的 TCP 连接超时，便于看到代理返回的 504。
+`ensure` 和 `watch` 默认检查 `https://example.com/`，
+返回 2xx、3xx 或 4xx 即认为转发正常（Git 服务的登录跳转、401/403 也证明能够访问）。
+可传入单个业务 URL 替换默认目标；若目标本身不可用，检查也会失败，因此应选择稳定的地址。
+`ensure` 检查失败时重新连接当前/上次成功的线路一次，并验证恢复结果；仍失败则返回非零。
+
+`watch` 每轮检查后等待 60 秒，默认连续 3 轮失败才重连，两次自动重连至少间隔 300 秒，
+避免偶发失败导致频繁断开连接。它使用独立锁防止重复巡检，重连沿用当前线路，不自动切换；
+手动重启或切换线路会替换旧巡检，`stop` 会关闭巡检；巡检本身退出不会停止代理。
+重复执行 `start` 也会补启缺失的巡检，不会重启正常代理。用 `status` 查看实际巡检状态，
+巡检日志保存在 `target/iwan-http.watch.log`。
+需要自定义目标或临时改用前台巡检时，可通过环境变量配置：
+
+```bash
+IWAN_WATCH_URL=https://example.com/ ./iwan-http.sh restart
+# 可选：关闭自动巡检，改用前台巡检（Ctrl+C 仅结束巡检）
+IWAN_AUTO_WATCH=0 ./iwan-http.sh restart
+./iwan-http.sh watch https://example.com/
+```
+
+可用 `IWAN_CHECK_TIMEOUT`、`IWAN_WATCH_INTERVAL`、`IWAN_WATCH_FAILURES`、
+`IWAN_WATCH_COOLDOWN` 调整超时、巡检间隔、失败阈值和冷却秒数，均须为正整数。
+`IWAN_WATCH_URL` 默认 `https://example.com/`；`IWAN_AUTO_WATCH=0` 关闭本次启动的自动巡检。
+巡检设置取自本次启动命令的环境，后续手动重启时未传入则恢复默认值。
+启动成功只表示客户端已监听；需要验证实际转发时运行 `ensure`。
+
+脚本优先使用 `target/release/`，其次 `target/debug/` 下的二进制。PID、日志、上次成功的
+线路和监听地址保存在仓库的 `target/iwan-http.*` 中；不要在代理运行期间执行 `cargo clean`。
+已有的 `target/iwan-http.pid` 可以继续使用，脚本会核对进程身份，避免误停其他程序。
+默认监听 `127.0.0.1:8080`，可在启动/重启时指定环境变量：
+
+```bash
+IWAN_HTTP_LISTEN=127.0.0.1:8081 ./iwan-http.sh start
+IWAN_DNS=https://dns.alidns.com/dns-query ./iwan-http.sh restart
+```
+
+监听地址、配置目录、`IWAN_DNS`、`IWAN_BIND` 会保存，重连时沿用；
+显式设置环境变量可覆盖旧值，将 `IWAN_DNS` 或 `IWAN_BIND` 设为空可恢复客户端默认值。
+每次启动前会将旧日志保留为 `target/iwan-http.log.previous`（仅保留上一份），便于排查恢复前的故障。
+`IWAN_CONFIG_DIR` 可指定认证配置目录，`IWAN_BIN` 可指定 OIDC 客户端路径；用
+`./iwan-http.sh --help` 查看完整说明。
+
 ## 高级选项
 
 ### 域名解析
