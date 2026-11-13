@@ -74,6 +74,10 @@ pub fn open(config: &SessionConfig<'_>) -> Result<ClientSession> {
                         sent_auth_verify = false;
                         continue;
                     }
+                    value
+                        .tun
+                        .parse::<std::net::Ipv4Addr>()
+                        .context("server returned no valid tunnel IPv4 address")?;
                     result = Some(value);
                     break;
                 }
@@ -100,4 +104,88 @@ pub fn open(config: &SessionConfig<'_>) -> Result<ClientSession> {
         encryption,
         sr: config.sr.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::protocol;
+
+    fn mock_handshake(legacy: bool, valid_ip: bool) -> Result<ClientSession> {
+        let gateway = UdpSocket::bind("127.0.0.1:0").unwrap();
+        gateway
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let port = gateway.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let (n, addr) = gateway.recv_from(&mut buf).unwrap();
+            let initial = protocol::parse_tlvs(&buf[24..n]);
+            let nonce = initial
+                .iter()
+                .find(|tlv| tlv.typ == protocol::TlvType::AuthVerify)
+                .unwrap()
+                .value
+                .clone();
+            let header = protocol::pkhdr(protocol::PT_OPEN_ACK, 1, 1, 1);
+            if legacy {
+                let challenge = protocol::tlv(protocol::T_AUTH_VERIFY, &nonce);
+                gateway
+                    .send_to(&protocol::ctrl_pkt(&header, &challenge), addr)
+                    .unwrap();
+                let (n, retry_addr) = gateway.recv_from(&mut buf).unwrap();
+                assert_eq!(retry_addr, addr);
+                assert!(protocol::verify_sig(&buf[..n]));
+                let expected: Vec<_> = initial
+                    .into_iter()
+                    .filter(|tlv| tlv.typ != protocol::TlvType::AuthVerify)
+                    .collect();
+                assert_eq!(protocol::parse_tlvs(&buf[24..n]), expected);
+            }
+            let mut payload = Vec::new();
+            if valid_ip {
+                payload.extend(protocol::tlv(protocol::T_IP, &[10, 0, 0, 2]));
+            }
+            if !legacy {
+                payload.extend(protocol::tlv(protocol::T_AUTH_VERIFY, &nonce));
+            }
+            gateway
+                .send_to(&protocol::ctrl_pkt(&header, &payload), addr)
+                .unwrap();
+        });
+        let result = open(&SessionConfig {
+            server: "127.0.0.1",
+            port,
+            user: "test-user",
+            pass: "test-password",
+            ct_pass: None,
+            salt: "test-salt",
+            mtu: 1400,
+            encrypt: 1,
+            bind: Some("127.0.0.1"),
+            pipe: Some((1, 2)),
+            srlink: Some(1),
+            sr: None,
+        });
+        peer.join().unwrap();
+        result
+    }
+
+    #[test]
+    fn authentication_retries_legacy_open_when_challenge_has_no_ip() {
+        assert_eq!(mock_handshake(true, true).unwrap().auth.tun, "10.0.0.2");
+    }
+
+    #[test]
+    fn authentication_accepts_complete_ack_without_fallback() {
+        assert_eq!(mock_handshake(false, true).unwrap().auth.tun, "10.0.0.2");
+    }
+
+    #[test]
+    fn authentication_rejects_legacy_ack_without_ip() {
+        let err = mock_handshake(true, false)
+            .err()
+            .expect("must reject missing IP");
+        assert!(err.to_string().contains("no valid tunnel IPv4"));
+    }
 }

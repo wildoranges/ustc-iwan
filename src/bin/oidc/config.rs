@@ -132,9 +132,20 @@ mod tests {
         let config: LocalConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.domain, "iwan.ustc");
         assert_eq!(config.servers[0].port, 6001);
+        assert!(config.servers[0].salt.is_empty());
 
         let saved = serde_json::to_value(&config).unwrap();
         assert_eq!(saved["servers"][0]["passWord"], "cipher");
         assert_eq!(saved["servers"][0]["host"], "1.2.3.4");
+    }
+
+    #[test]
+    fn config_preserves_password_salt() {
+        let json = r#"{"servers":[{"username":"user","passWord":"cipher","salt":"test-salt"}]}"#;
+        let config: LocalConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.servers[0].salt, "test-salt");
+        let saved = serde_json::to_string(&config).unwrap();
+        let restored: LocalConfig = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.servers[0].salt, "test-salt");
     }
 }

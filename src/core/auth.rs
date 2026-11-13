@@ -344,4 +344,14 @@ mod auth_tests {
             .iter()
             .any(|tlv| tlv.typ == protocol::TlvType::AuthVerify));
     }
+
+    #[test]
+    fn authentication_challenge_requires_valid_signature_and_nonce() {
+        let header = protocol::pkhdr(protocol::PT_OPEN_ACK, 1, 1, 1);
+        let payload = protocol::tlv(protocol::T_AUTH_VERIFY, &42u32.to_be_bytes());
+        let mut packet = protocol::ctrl_pkt(&header, &payload);
+        assert!(parse_ack(&packet, 43).is_err());
+        packet[8] ^= 1;
+        assert!(parse_ack(&packet, 42).is_err());
+    }
 }

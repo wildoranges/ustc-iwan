@@ -127,3 +127,28 @@ pub fn aes_block_256(key: &[u8; 32], block: &[u8; 16]) -> [u8; 16] {
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn password_encryption_matches_openssl_vectors() {
+        assert_eq!(
+            hex(&encrypt_password_salted(
+                "test-password",
+                "test-user",
+                "test-salt"
+            )),
+            "816018312819cb5aa266d7a70b75ed76"
+        );
+        assert_eq!(
+            hex(&encrypt_password("test-password", "test-user")),
+            "e040978fe9f86cd6aad018a1e325b74c"
+        );
+        assert_eq!(
+            encrypt_password_salted("test-password", "test-user", ""),
+            encrypt_password("test-password", "test-user")
+        );
+    }
+}
