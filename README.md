@@ -313,6 +313,11 @@ IWAN_HTTP_LISTEN=127.0.0.1:8081 ./iwan-http.sh start
 IWAN_DNS=https://dns.alidns.com/dns-query ./iwan-http.sh restart
 ```
 
+若出现 `bind HTTP listener ...: Address already in use`，表示本地监听端口已被占用，
+与线路认证无关。可用 `ss -ltnp 'sport = :8080'` 查看占用进程，或按上例改用空闲端口。
+HTTP/SOCKS5 客户端在连接线路前绑定本地端口，绑定失败会直接退出，不会反复认证重连；
+隧道重连期间保留监听端口。换端口后，浏览器或其他应用的代理设置也需同步修改。
+
 监听地址、配置目录、`IWAN_DNS`、`IWAN_BIND` 会保存，重连时沿用；
 显式设置环境变量可覆盖旧值，将 `IWAN_DNS` 或 `IWAN_BIND` 设为空可恢复客户端默认值。
 每次启动前会将旧日志保留为 `target/iwan-http.log.previous`（仅保留上一份），便于排查恢复前的故障。

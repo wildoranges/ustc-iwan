@@ -43,17 +43,30 @@ fn main() -> Result<()> {
         connect::print_servers(&config.servers);
     }
     if do_connect {
+        let listener = if cli.http || cli.socks {
+            use iwan::core::local_proxy::{bind_listener, ProxyProtocol};
+            let (protocol, listen) = if cli.http {
+                (ProxyProtocol::Http, cli.http_listen)
+            } else {
+                (ProxyProtocol::Socks5, cli.socks_listen)
+            };
+            Some(bind_listener(protocol, listen)?)
+        } else {
+            None
+        };
         const MAX_ATTEMPTS: u32 = 5;
         let mut attempt = 0u32;
         loop {
-            match connect::connect_server(&cli, &config) {
+            match connect::connect_server(&cli, &config, listener.as_ref()) {
                 Ok(()) => break,
                 Err(e) => {
                     attempt += 1;
                     if attempt >= MAX_ATTEMPTS {
                         return Err(e);
                     }
-                    eprintln!("connection ended: {e}; reconnecting ({attempt}/{MAX_ATTEMPTS})...");
+                    eprintln!(
+                        "connection ended: {e:#}; reconnecting ({attempt}/{MAX_ATTEMPTS})..."
+                    );
                     std::thread::sleep(std::time::Duration::from_secs(1));
                 }
             }

@@ -141,7 +141,11 @@ fn select_server<'a>(servers: &'a [Server], choice: Option<&str>) -> Result<&'a 
     }
 }
 
-pub(crate) fn connect_server(cli: &cli::Cli, config: &LocalConfig) -> Result<()> {
+pub(crate) fn connect_server(
+    cli: &cli::Cli,
+    config: &LocalConfig,
+    listener: Option<&std::net::TcpListener>,
+) -> Result<()> {
     if config.servers.is_empty() {
         anyhow::bail!("no servers in config");
     }
@@ -214,7 +218,12 @@ pub(crate) fn connect_server(cli: &cli::Cli, config: &LocalConfig) -> Result<()>
     );
 
     if cli.socks || cli.http {
-        return run_local_proxy(cli, session, dns);
+        return run_local_proxy(
+            cli,
+            session,
+            dns,
+            listener.context("missing proxy listener")?,
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -271,6 +280,7 @@ fn run_local_proxy(
     cli: &cli::Cli,
     session: client::ClientSession,
     dns: iwan::core::dns::DnsResolver,
+    listener: &std::net::TcpListener,
 ) -> Result<()> {
     let inner_ip = session
         .auth
@@ -293,7 +303,8 @@ fn run_local_proxy(
             cli.socks_listen,
         )
     };
-    iwan::core::local_proxy::run(
+    iwan::core::local_proxy::run_with_listener(
+        listener.try_clone().context("clone proxy listener")?,
         &session.sock,
         iwan::core::local_proxy::ProxyConfig {
             listen,

@@ -311,6 +311,10 @@ start_proxy() {
     done
     printf '错误：代理启动失败或等待超时，详情：%s\n' "$LOG_FILE" >&2
     tail -n 12 -- "$LOG_FILE" >&2
+    if grep -Fq -- "bind HTTP listener $listen" "$LOG_FILE"; then
+        printf '无法监听 %s。若日志提示 Address already in use，说明端口被占用。\n' "$listen" >&2
+        printf '可用 ss -ltnp 查看占用进程，或换用空闲端口，例如：IWAN_HTTP_LISTEN=127.0.0.1:8081 %q start %q\n' "$SCRIPT_PATH" "$server" >&2
+    fi
     stop_proxy || return 1
     return 1
 }

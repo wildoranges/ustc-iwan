@@ -49,9 +49,24 @@ pub struct ProxyConfig<'a> {
 }
 
 pub fn run(sock: &UdpSocket, config: ProxyConfig<'_>) -> Result<()> {
-    let listener = TcpListener::bind(config.listen)
-        .with_context(|| format!("bind {} listener {}", config.protocol, config.listen))?;
+    let listener = bind_listener(config.protocol, config.listen)?;
+    run_with_listener(listener, sock, config)
+}
+
+/// Reserve the local address before authenticating or entering a reconnect loop.
+pub fn bind_listener(protocol: ProxyProtocol, listen: SocketAddr) -> Result<TcpListener> {
+    let listener =
+        TcpListener::bind(listen).with_context(|| format!("bind {protocol} listener {listen}"))?;
     listener.set_nonblocking(true)?;
+    Ok(listener)
+}
+
+/// Run using a listener reserved by the caller, which can be retained across reconnects.
+pub fn run_with_listener(
+    listener: TcpListener,
+    sock: &UdpSocket,
+    config: ProxyConfig<'_>,
+) -> Result<()> {
     sock.set_nonblocking(true)?;
 
     let mut engine = Engine::new(listener, sock, &config)?;
@@ -67,4 +82,25 @@ pub fn run(sock: &UdpSocket, config: ProxyConfig<'_>) -> Result<()> {
     engine.run()?;
     println!("{} stopped", config.protocol);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn occupied_listener_reports_address_and_io_error() {
+        let listener = bind_listener(ProxyProtocol::Http, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = listener.local_addr().unwrap();
+        let error = bind_listener(ProxyProtocol::Http, address).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains(&format!("HTTP listener {address}")));
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+        drop(listener);
+        assert!(bind_listener(ProxyProtocol::Http, address).is_ok());
+    }
 }

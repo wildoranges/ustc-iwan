@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 pub fn run(args: &LocalProxyArgs, protocol: ProxyProtocol, listen: SocketAddr) -> Result<()> {
+    let listener = local_proxy::bind_listener(protocol, listen)?;
     loop {
         let dns = DnsResolver::parse(&args.dns)
             .with_context(|| format!("invalid --dns value {:?}", args.dns))?;
@@ -58,7 +59,8 @@ pub fn run(args: &LocalProxyArgs, protocol: ProxyProtocol, listen: SocketAddr) -
             .context("server returned invalid gateway IPv4 address")?;
         let mtu = usize::from(session.auth.mtu.min(args.mtu));
 
-        match local_proxy::run(
+        match local_proxy::run_with_listener(
+            listener.try_clone().context("clone proxy listener")?,
             &session.sock,
             ProxyConfig {
                 listen,
