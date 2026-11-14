@@ -93,7 +93,8 @@ process_stamp() {
     local stat rest
     local -a fields
     [[ -r /proc/$1/stat ]] || return 1
-    IFS= read -r stat < "/proc/$1/stat" || return 1
+    # The process may exit between the check and open; redirect stderr first.
+    IFS= read -r stat 2>/dev/null < "/proc/$1/stat" || return 1
     rest=${stat##*) }
     read -r -a fields <<< "$rest"
     [[ ${fields[0]:-Z} != Z && ${fields[19]:-} =~ ^[0-9]+$ ]] || return 1
@@ -110,7 +111,7 @@ get_running() {
     if [[ -f "$STAMP_FILE" ]]; then
         [[ "$stamp" == "$(read_value "$STAMP_FILE" '')" ]] || return 1
     fi
-    mapfile -d '' -t args < "/proc/$PID/cmdline" || return 1
+    mapfile -d '' -t args 2>/dev/null < "/proc/$PID/cmdline" || return 1
     [[ ${#args[@]} -gt 0 ]] || return 1
     executable=${args[0]}
     if [[ "$executable" != /* ]]; then
@@ -149,7 +150,7 @@ get_watcher() {
     (( WATCH_PID > 1 )) || return 1
     stamp=$(process_stamp "$WATCH_PID") || return 1
     [[ "$stamp" == "$WATCH_STAMP" ]] || return 1
-    mapfile -d '' -t args < "/proc/$WATCH_PID/cmdline" || return 1
+    mapfile -d '' -t args 2>/dev/null < "/proc/$WATCH_PID/cmdline" || return 1
     cwd=$(readlink -- "/proc/$WATCH_PID/cwd") || return 1
     for ((i=0; i+1<${#args[@]}; i++)); do
         [[ "${args[i+1]}" == watch ]] || continue

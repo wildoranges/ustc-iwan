@@ -305,6 +305,7 @@ IWAN_AUTO_WATCH=0 ./iwan-http.sh restart
 脚本优先使用 `target/release/`，其次 `target/debug/` 下的二进制。PID、日志、上次成功的
 线路和监听地址保存在仓库的 `target/iwan-http.*` 中；不要在代理运行期间执行 `cargo clean`。
 已有的 `target/iwan-http.pid` 可以继续使用，脚本会核对进程身份，避免误停其他程序。
+检查进程状态时若进程恰好退出，脚本会按已停止处理，不输出 `/proc` 文件不存在的错误。
 默认监听 `127.0.0.1:8080`，可在启动/重启时指定环境变量：
 
 ```bash
